@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SecureStamp - 문서 인쇄 보안 워터마크 생성기</title>
+  <meta name="description" content="PDF 문서에 출력자 정보(시간, IP, 이름)를 브라우저 로컬 메모리에서 100% 안전하게 워터마크로 각인하는 클라이언트 사이드 웹 도구입니다.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- PDF-Lib & FontKit -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://unpkg.com/@pdf-lib/fontkit@0.0.14/dist/fontkit.umd.min.js"></script>
+
+  <!-- PDF.js for fast client-side preview -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <!-- JSZip -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-badge">
+          <i data-lucide="shield-check"></i>
+        </div>
+        <div class="brand-text">
+          <h1>SecureStamp <span class="badge-ver">v1.0</span></h1>
+          <p>기업 문서 인쇄 보안 워터마크 오버레이</p>
+        </div>
+      </div>
+
+      <div class="header-badges">
+        <div class="security-indicator" id="securityPill" title="모든 연산은 사용자 브라우저 메모리 내에서만 실행됩니다.">
+          <span class="pulse-dot"></span>
+          <i data-lucide="lock" class="icon-sm"></i>
+          <span>100% 로컬 오프라인 연산 (외부 서버 전송 없음)</span>
+        </div>
+        <button id="themeToggleBtn" class="btn-icon" aria-label="테마 전환" title="다크/라이트 모드 전환">
+          <i data-lucide="moon" id="themeIcon"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <main class="app-workspace">
+      <!-- Left Panel: Controls & File Queue -->
+      <section class="panel panel-controls">
+        <!-- 1. Upload Section -->
+        <div class="control-section upload-section">
+          <div class="section-title">
+            <i data-lucide="files"></i>
+            <span>PDF 문서 업로드</span>
+            <button type="button" class="btn-text-action" id="samplePdfBtn" title="테스트용 샘플 문서 로드">
+              <i data-lucide="sparkles"></i> 샘플 PDF 추가
+            </button>
+          </div>
+
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept="application/pdf" multiple class="file-input-hidden">
+            <div class="dropzone-content">
+              <div class="dropzone-icon">
+                <i data-lucide="upload-cloud"></i>
+              </div>
+              <p class="dropzone-main-text">PDF 파일을 드래그하여 놓거나 <span>파일 선택</span></p>
+              <p class="dropzone-sub-text">여러 개의 PDF 문서를 한 번에 업로드할 수 있습니다</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Watermark Information Section -->
+        <div class="control-section">
+          <div class="section-title">
+            <i data-lucide="user-check"></i>
+            <span>출력자 보안 식별 정보</span>
+          </div>
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="userNameInput">
+                <span>출력자 이름 / 부서</span>
+                <span class="required-star">*</span>
+              </label>
+              <div class="input-with-icon">
+                <i data-lucide="user" class="input-icon"></i>
+                <input type="text" id="userNameInput" placeholder="예: 홍길동 (보안기획팀)" value="홍길동 (보안운영팀)">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="userIpInput">
+                <span>출력 단말 IP 주소</span>
+                <button type="button" class="btn-micro" id="refreshIpBtn" title="IP 주소 자동 감지 시도">
+                  <i data-lucide="refresh-cw"></i> 감지
+                </button>
+              </label>
+              <div class="input-with-icon">
+                <i data-lucide="network" class="input-icon"></i>
+                <input type="text" id="userIpInput" placeholder="감지 중..." value="192.168.1.105">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="timestampInput">
+                <span>출력 일시 (Timestamp)</span>
+                <button type="button" class="btn-micro" id="autoTimeBtn" title="현재 시각 실시간 갱신 활성화">
+                  <i data-lucide="clock"></i> 실시간 갱신
+                </button>
+              </label>
+              <div class="input-with-icon">
+                <i data-lucide="calendar" class="input-icon"></i>
+                <input type="text" id="timestampInput" readonly>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="customNoticeInput">
+                <span>보안 경고 문구 (선택)</span>
+              </label>
+              <div class="input-with-icon">
+                <i data-lucide="alert-triangle" class="input-icon"></i>
+                <input type="text" id="customNoticeInput" placeholder="예: 무단 복제 및 외부 유출 금지" value="무단 복제 및 외부 유출 금지">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Watermark Appearance Style Settings -->
+        <div class="control-section">
+          <div class="section-title">
+            <i data-lucide="sliders"></i>
+            <span>워터마크 배치 및 스타일</span>
+            <button type="button" class="btn-text-action" id="resetStyleBtn">기본값 복원</button>
+          </div>
+
+          <div class="settings-grid">
+            <div class="range-group">
+              <div class="range-header">
+                <label for="fontSizeRange">글자 크기</label>
+                <span class="range-value" id="fontSizeVal">9 pt</span>
+              </div>
+              <input type="range" id="fontSizeRange" min="7" max="14" step="0.5" value="9">
+            </div>
+
+            <div class="range-group">
+              <div class="range-header">
+                <label for="opacityRange">투명도 (인쇄 농도)</label>
+                <span class="range-value" id="opacityVal">25%</span>
+              </div>
+              <input type="range" id="opacityRange" min="8" max="75" step="1" value="25">
+            </div>
+
+            <div class="range-group">
+              <div class="range-header">
+                <label for="angleRange">회전 각도</label>
+                <span class="range-value" id="angleVal">-30°</span>
+              </div>
+              <input type="range" id="angleRange" min="-75" max="75" step="5" value="-30">
+            </div>
+
+            <div class="range-group">
+              <div class="range-header">
+                <label for="densityRange">배치 간격 (밀도)</label>
+                <span class="range-value" id="densityVal">조밀하게</span>
+              </div>
+              <input type="range" id="densityRange" min="1" max="3" step="1" value="1">
+            </div>
+
+            <div class="range-group full-width">
+              <label>워터마크 색상</label>
+              <div class="color-palette">
+                <button type="button" class="color-swatch active" data-color="#555555" style="background:#555555;" title="클래식 그레이"></button>
+                <button type="button" class="color-swatch" data-color="#2c3e50" style="background:#2c3e50;" title="다크 네이비"></button>
+                <button type="button" class="color-swatch" data-color="#c0392b" style="background:#c0392b;" title="보안 레드"></button>
+                <button type="button" class="color-swatch" data-color="#16a085" style="background:#16a085;" title="틸 에메랄드"></button>
+                <button type="button" class="color-swatch" data-color="#111111" style="background:#111111;" title="솔리드 블랙"></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. File Queue & Status -->
+        <div class="control-section files-section">
+          <div class="section-title">
+            <i data-lucide="layers"></i>
+            <span>업로드된 파일 목록 (<span id="fileCount">0</span>)</span>
+            <button type="button" class="btn-text-action text-danger" id="clearAllFilesBtn" style="display:none;">
+              전체 비우기
+            </button>
+          </div>
+
+          <div class="file-queue-empty" id="fileQueueEmpty">
+            <i data-lucide="file-question"></i>
+            <p>선택된 파일이 없습니다.</p>
+            <span>상단 업로드 영역에 PDF를 추가해주세요.</span>
+          </div>
+
+          <ul class="file-queue-list" id="fileQueueList"></ul>
+        </div>
+      </section>
+
+      <!-- Right Panel: Real-time Live Preview & Actions -->
+      <section class="panel panel-preview">
+        <div class="preview-header">
+          <div class="preview-title-group">
+            <h2>
+              <i data-lucide="eye"></i>
+              실시간 인쇄 워터마크 미리보기
+            </h2>
+            <p class="preview-sub" id="previewSubText">첫 번째 페이지 워터마크 결과가 실시간 렌더링됩니다.</p>
+          </div>
+
+          <div class="preview-toolbar">
+            <div class="zoom-controls">
+              <button type="button" class="btn-icon-sm" id="zoomOutBtn" title="축소"><i data-lucide="minus"></i></button>
+              <span id="zoomLevel">100%</span>
+              <button type="button" class="btn-icon-sm" id="zoomInBtn" title="확대"><i data-lucide="plus"></i></button>
+              <button type="button" class="btn-icon-sm" id="zoomFitBtn" title="화면 맞춤"><i data-lucide="maximize-2"></i></button>
+            </div>
+            <div class="page-nav" id="pageNavControls" style="display:none;">
+              <button type="button" class="btn-icon-sm" id="prevPageBtn"><i data-lucide="chevron-left"></i></button>
+              <span id="pageIndicator">1 / 1</span>
+              <button type="button" class="btn-icon-sm" id="nextPageBtn"><i data-lucide="chevron-right"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview Viewport Canvas -->
+        <div class="preview-viewport" id="previewViewport">
+          <div class="preview-placeholder" id="previewPlaceholder">
+            <div class="placeholder-graphic">
+              <i data-lucide="file-text"></i>
+              <div class="shield-float"><i data-lucide="lock"></i></div>
+            </div>
+            <h3>미리보기 대기 중</h3>
+            <p>PDF 문서를 추가하면 실제 인쇄 시 인자되는 워터마크 레이아웃을 즉시 확인할 수 있습니다.</p>
+            <button type="button" class="btn-secondary" id="previewSampleBtn">
+              <i data-lucide="file-plus"></i> 샘플 문서로 바로 체험하기
+            </button>
+          </div>
+
+          <div class="canvas-wrapper" id="canvasWrapper" style="display:none;">
+            <canvas id="previewCanvas"></canvas>
+            <div class="rendering-overlay" id="renderingOverlay" style="display:none;">
+              <div class="spinner"></div>
+              <span>미리보기 생성 중...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Quick Information Summary Bar -->
+        <div class="watermark-summary-bar">
+          <div class="summary-item">
+            <span class="label">적용 워터마크 샘플:</span>
+            <code class="val" id="watermarkPreviewSnippet">[2026-09-17 21:05] IP: 192.168.1.105 / 홍길동 (보안운영팀)</code>
+          </div>
+        </div>
+
+        <!-- Action Bar: Batch Processing & Download Options -->
+        <div class="preview-action-bar">
+          <div class="action-info">
+            <span id="batchStatusText">변환할 문서를 업로드해 주세요.</span>
+          </div>
+
+          <div class="action-buttons">
+            <button type="button" class="btn-secondary" id="downloadCurrentPdfBtn" disabled>
+              <i data-lucide="download"></i>
+              <span>선택 파일 PDF 다운로드</span>
+            </button>
+
+            <button type="button" class="btn-primary" id="downloadBatchZipBtn" disabled>
+              <i data-lucide="archive"></i>
+              <span>전체 일괄 변환 (.ZIP 다운로드)</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Processing Modal -->
+    <div class="modal-backdrop" id="progressModal" style="display:none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-icon">
+            <i data-lucide="cog" class="spin-icon"></i>
+          </div>
+          <div class="modal-titles">
+            <h3 id="modalTitle">PDF 워터마크 처리 중...</h3>
+            <p id="modalSub">사용자 PC 메모리에서 고속으로 변환하고 있습니다.</p>
+          </div>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+        </div>
+        <div class="progress-status-row">
+          <span id="progressDetail">페이지 워터마크 각인 중 (0/0)</span>
+          <span id="progressPercent">0%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
