@@ -196,7 +196,7 @@ function updateSnippetText() {
   const time = state.watermark.timestamp || formatCurrentTime();
   const ip = state.watermark.ip || '127.0.0.1';
   const name = state.watermark.name || '출력자 미지정';
-  const notice = state.watermark.notice ? ` / ${state.watermark.notice}` : '';
+  const notice = state.watermark.notice ? ` [우측상단: ${state.watermark.notice}]` : '';
   dom.watermarkPreviewSnippet.textContent = `[${time}] IP: ${ip} | ${name}${notice}`;
 }
 
@@ -573,6 +573,7 @@ async function drawLivePreview() {
 function renderWatermarkOnCanvas(ctx, canvasWidth, canvasHeight, scale) {
   const { name, ip, timestamp, notice, fontSize, opacity, angle, density, color } = state.watermark;
 
+  // 1. Diagonal repeating grid watermark (only timestamp, IP, operator name)
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.fillStyle = color;
@@ -582,17 +583,13 @@ function renderWatermarkOnCanvas(ctx, canvasWidth, canvasHeight, scale) {
   const scaledFontSize = fontSize * scale * 1.33;
   ctx.font = `600 ${scaledFontSize}px Pretendard, -apple-system, sans-serif`;
 
-  // Watermark text lines (multi-line small text)
   const line1 = `[인쇄보안] ${timestamp || formatCurrentTime()}`;
   const line2 = `IP: ${ip || '127.0.0.1'} | ${name || '출력자 미지정'}`;
-  const line3 = notice ? `${notice}` : '';
   const lines = [line1, line2];
-  if (line3) lines.push(line3);
 
   const lineHeight = scaledFontSize * 1.4;
 
   // Spacing based on density setting
-  // 1: 조밀(130px), 2: 보통(190px), 3: 넓게(260px)
   const densityBase = density === 1 ? 130 : (density === 2 ? 190 : 260);
   const stepX = densityBase * scale;
   const stepY = densityBase * scale;
@@ -600,7 +597,7 @@ function renderWatermarkOnCanvas(ctx, canvasWidth, canvasHeight, scale) {
   const rad = (angle * Math.PI) / 180;
   const diag = Math.sqrt(canvasWidth * canvasWidth + canvasHeight * canvasHeight);
 
-  // Translate to center and rotate
+  // Translate to center and rotate for diagonal overlay
   ctx.translate(canvasWidth / 2, canvasHeight / 2);
   ctx.rotate(rad);
 
@@ -612,7 +609,6 @@ function renderWatermarkOnCanvas(ctx, canvasWidth, canvasHeight, scale) {
   let rowCount = 0;
   for (let y = startY; y < endY; y += stepY) {
     rowCount++;
-    // Stagger every alternating row for a natural diagonal watermark matrix
     const offsetX = (rowCount % 2 === 0) ? stepX / 2 : 0;
 
     for (let x = startX + offsetX; x < endX; x += stepX) {
@@ -624,6 +620,45 @@ function renderWatermarkOnCanvas(ctx, canvasWidth, canvasHeight, scale) {
   }
 
   ctx.restore();
+
+  // 2. Top-Right Security Notice Stamp
+  if (notice && notice.trim()) {
+    ctx.save();
+    const noticeText = notice.startsWith('[') ? notice : `[대외비] ${notice}`;
+    const badgeFontSize = Math.max(9, Math.round(9.5 * scale));
+    ctx.font = `600 ${badgeFontSize}px Pretendard, -apple-system, sans-serif`;
+
+    const textMetrics = ctx.measureText(noticeText);
+    const textWidth = textMetrics.width;
+    const padX = 10 * scale;
+    const padY = 5 * scale;
+    const badgeWidth = textWidth + padX * 2;
+    const badgeHeight = badgeFontSize + padY * 2;
+
+    const marginX = 22 * scale;
+    const marginY = 18 * scale;
+    const badgeX = canvasWidth - marginX - badgeWidth;
+    const badgeY = marginY;
+
+    // Background
+    ctx.globalAlpha = Math.min(0.9, opacity + 0.4);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(badgeX, badgeY, badgeWidth, badgeHeight);
+
+    // Border
+    const badgeBorderColor = color === '#111111' || color === '#555555' ? '#c0392b' : color;
+    ctx.strokeStyle = badgeBorderColor;
+    ctx.lineWidth = Math.max(1, 1.2 * scale);
+    ctx.strokeRect(badgeX, badgeY, badgeWidth, badgeHeight);
+
+    // Text
+    ctx.fillStyle = badgeBorderColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(noticeText, badgeX + badgeWidth / 2, badgeY + badgeHeight / 2 + (0.5 * scale));
+
+    ctx.restore();
+  }
 }
 
 // ==========================================================================
@@ -675,7 +710,6 @@ async function applyWatermarkToPdfBuffer(srcArrayBuffer, onProgress) {
   const line1 = `[PRINT-SEC] ${timeStr}`;
   const line2 = `IP: ${ipStr} | ${safeName}`;
   const lines = [line1, line2];
-  if (safeNotice) lines.push(safeNotice);
 
   const densityBase = density === 1 ? 130 : (density === 2 ? 190 : 260);
 
@@ -692,27 +726,24 @@ async function applyWatermarkToPdfBuffer(srcArrayBuffer, onProgress) {
     const cx = width / 2;
     const cy = height / 2;
 
+    // 1. Diagonal grid repeating watermark
     let rowIdx = 0;
     for (let yRel = -diag; yRel < diag; yRel += stepY) {
       rowIdx++;
       const offset = (rowIdx % 2 === 0) ? stepX / 2 : 0;
 
       for (let xRel = -diag + offset; xRel < diag; xRel += stepX) {
-        // Rotate point (xRel, yRel) around (0,0) by angle
         const rad = (angle * Math.PI) / 180;
         
         lines.forEach((txt, lIdx) => {
           const lOffsetY = (lIdx - (lines.length - 1) / 2) * lineHeight;
           
-          // Unrotated coordinate offset
           const localX = xRel;
           const localY = yRel + lOffsetY;
 
-          // Rotated coordinate
           const rotX = cx + (localX * Math.cos(rad) - localY * Math.sin(rad));
           const rotY = cy + (localX * Math.sin(rad) + localY * Math.cos(rad));
 
-          // Draw text if within reasonable bounds around page
           if (rotX >= -100 && rotX <= width + 100 && rotY >= -100 && rotY <= height + 100) {
             try {
               page.drawText(txt, {
@@ -729,6 +760,58 @@ async function applyWatermarkToPdfBuffer(srcArrayBuffer, onProgress) {
             }
           }
         });
+      }
+    }
+
+    // 2. Top-Right Security Notice Stamp
+    if (notice && notice.trim()) {
+      try {
+        const stampText = isKoreanFont 
+          ? (notice.startsWith('[') ? notice : `[대외비] ${notice}`) 
+          : (safeNotice.startsWith('[') ? safeNotice : `[CONFIDENTIAL] ${safeNotice}`);
+        
+        const stampFontSize = 8.5;
+        let textWidth = stampFontSize * stampText.length * 0.6;
+        if (fontToUse && fontToUse.widthOfTextAtSize) {
+          try {
+            textWidth = fontToUse.widthOfTextAtSize(stampText, stampFontSize);
+          } catch (wErr) {
+            // fallback estimation
+          }
+        }
+
+        const padH = 8;
+        const padV = 4;
+        const boxW = textWidth + padH * 2;
+        const boxH = stampFontSize + padV * 2;
+
+        const marginR = 25;
+        const marginT = 20;
+        const boxX = width - marginR - boxW;
+        const boxY = height - marginT - boxH;
+
+        // Stamp Box Border
+        page.drawRectangle({
+          x: boxX,
+          y: boxY,
+          width: boxW,
+          height: boxH,
+          borderColor: pdfRgb,
+          borderWidth: 0.8,
+          opacity: Math.min(1.0, opacity + 0.35)
+        });
+
+        // Stamp Text
+        page.drawText(stampText, {
+          x: boxX + padH,
+          y: boxY + padV + 1,
+          size: stampFontSize,
+          font: fontToUse,
+          color: pdfRgb,
+          opacity: Math.min(1.0, opacity + 0.45)
+        });
+      } catch (stampErr) {
+        console.warn('Top-right notice stamp error:', stampErr);
       }
     }
 
